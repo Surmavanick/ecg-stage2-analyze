@@ -3,12 +3,11 @@ from fastapi.responses import JSONResponse
 import numpy as np
 import cv2
 import tempfile
-from scipy.signal import find_peaks
 
 app = FastAPI(
     title="ECG Analysis API",
-    description="Stage 2 - Image to Signal & Simple Features",
-    version="0.3.0"
+    description="Stage 2 - Image to Signal & Simple Features (no scipy)",
+    version="0.3.1"
 )
 
 @app.get("/")
@@ -20,7 +19,7 @@ async def analyze_ecg(file: UploadFile = File(...)):
     """
     Step 1: იღებს ECG trace.png
     Step 2: გარდაქმნის signal vector-ად
-    Step 3: ამოიცნობს პიკებს და ითვლის HR
+    Step 3: ამოიცნობს პიკებს numpy-ით და ითვლის HR
     """
     # დროებითი ფაილის შენახვა
     with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
@@ -48,17 +47,27 @@ async def analyze_ecg(file: UploadFile = File(...)):
     signal = np.array([s for s in signal if s is not None])
     signal = (signal - np.min(signal)) / (np.max(signal) - np.min(signal))
 
-    # Signal → Features
-    # Detect peaks (მაღალი მნიშვნელობები სიგნალში)
-    peaks, _ = find_peaks(signal, distance=30, height=0.5)  
+    # --- Simple peak detection with numpy ---
+    peaks = []
+    min_distance = 30  # მინიმალური დაშორება პიკებს შორის (samples)
+    threshold = 0.5    # მხოლოდ მაღალი მნიშვნელობები
 
-    rr_intervals = np.diff(peaks)  # sample intervals
+    last_peak = -min_distance
+    for i in range(1, len(signal)-1):
+        if signal[i] > threshold and signal[i] > signal[i-1] and signal[i] > signal[i+1]:
+            if (i - last_peak) >= min_distance:
+                peaks.append(i)
+                last_peak = i
+
+    peaks = np.array(peaks)
+
+    # RR intervals & HR
+    rr_intervals = np.diff(peaks)
     heart_rate = None
     rr_variability = None
 
     if len(rr_intervals) > 0:
-        # RR interval-ები sample-ებშია → ვივარაუდოთ 250Hz sampling (მერე დავაზუსტებთ!)
-        fs = 250  # Hz
+        fs = 250  # ვივარაუდოთ 250 Hz sampling
         rr_sec = rr_intervals / fs
         mean_rr = np.mean(rr_sec)
         heart_rate = 60.0 / mean_rr
